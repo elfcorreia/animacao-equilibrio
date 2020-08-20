@@ -1,0 +1,486 @@
+<html>
+	<head>
+		<style>
+			body {
+				margin: 0;
+				display: flex;
+				min-height: 100vh;
+				font-family: sans-serif;
+				box-sizing: border-box;
+			}
+			input {
+				max-width: 80px;
+			}
+			label {
+				font-size: 0.7em;
+				text-transform: uppercase;
+				font-weight: bold;
+				margin-right: 10px;				
+				line-height: 2.7em;
+				max-width: 80px;
+			}
+			.vbox {
+				display: flex; 
+				flex-direction: column;
+			}			
+			.hbox {
+				display: flex; 
+				flex-direction: row;
+			}			
+			.has-border {
+				border: solid 1pt black;			
+			}
+			.has-shadow {
+				box-shadow: 1px 1px 4px black;
+			}
+			.is-padded {
+				padding: 10px;
+			}
+			.is-centered {
+				margin: auto;
+			}
+			.is-bg-gray {
+				background-color: #eee;
+			}
+			.is-bg-gray-dark {
+				background-color: #888;
+			}
+			.is-bg-white {
+				background-color: #fff;
+			}
+			.is-growed {
+				flex-grow: 1;
+			}
+			.is-text-right {
+				text-align: right;
+			}
+		</style>
+	</head>
+	<body class="is-bg-gray-dark">
+		<div class="hbox is-growed">
+			<div class="vbox is-growed is-padded">				
+				<div>
+					<div class="is-bg-gray is-padded" style="margin: auto; width: 200px;">
+						<button id="step" type="button">Passo</button>
+						<button id="run" type="button" style="margin-left: 10px;">Roda</button>
+					</div>
+				</div>
+				<canvas id="simulacao" class="is-centered has-border has-shadow is-bg-white" width="300" height="300"></canvas>
+			</div>
+			<div class="vbox is-bg-gray is-padded">
+				<div class="vbox">
+					<h1>Reação Equilibrio</h1>
+					<div class="hbox">
+						<label class="is-text-right is-growed">Largura</label>						
+						<input class="" id="box_width" value="600" type="numeric">						
+					</div>
+					<div class="hbox">
+						<label class="is-text-right is-growed">Altura</label>
+						<input class="is-growed" id="box_height" value="600" type="numeric">					
+					</div>					
+					<div class="hbox">
+						<label class="is-text-right is-growed">Qtd NO2</label>
+						<input class="is-growed" id="qtd_no2" value="100" type="numeric">
+					</div>
+					<div class="hbox">
+						<label class="is-text-right is-growed">Equilibrio</label>
+						<input class="is-growed" id="equilibrio" value="0.8" type="numeric">
+					</div>
+					<button id="reset" style="margin-top: 10px;" type="button">Prepara</button>					
+					
+					<canvas class="is-centered is-bg-white has-border" style="margin-top: 10px;" id="histograma" height="50"></canvas>
+					
+					<p class="is-centered" style="margin-top: 10px; width: 300px; overflow-wrap: anywhere;" id="log"></p>
+				</div>				
+			</div>	
+			
+		</div>
+		<script>	
+			function Simulation(opt) {
+				const self = this;
+				this.classes_particulas = opt.classes_particulas;
+				this.recipiente = opt.recipiente;
+				this.colisao_listeners = opt.colisao_listeners;
+				this.colisoes = [];
+				this.particulas = [];
+				this.particulas_removidas = [];
+				this.particulas_novas = [];
+				this.limiar_equilibrio = opt.limiar_equilibrio;
+				this.stats = { total: 0, by_class: {} };
+
+				this.calcula_limite_para_colisoes = function() {
+					for (let i = 0, n = self.classes_particulas.length; i < n; i++) {
+						self.colisoes.push([]);
+						for (let j = 0; j < n; j++) {
+							const d = self.classes_particulas[i].radius + self.classes_particulas[j].radius;
+							self.colisoes[i].push(d*d);
+						}
+					}					
+				}
+
+				this.inicializa = function (qtd) {
+					self.particulas = [];
+					self.quantidade_inicial = qtd;
+					for (let i = 0; i < qtd; i++) {
+						self.particulas.push({
+							classe: 0,
+							x: Math.random() * (self.recipiente.width - 2*self.classes_particulas[1].radius),
+							y: Math.random() * (self.recipiente.height - 2*self.classes_particulas[1].radius),
+							rotation: 2*Math.PI*Math.random(),
+							vx: Math.cos(2*Math.PI*Math.random() - Math.PI),
+							vy: Math.sin(2*Math.PI*Math.random() - Math.PI),
+							vrotation: (Math.random() * 2 - 1) * Math.PI,
+							decay: self.classes_particulas[0].decay
+						});
+					}
+				}
+
+				this.atualiza_stats = function() {
+					self.stats = {
+						total: 0,
+						by_class: {}
+					};					
+					for (let i = 0, n = self.particulas.length; i < n; i++) {
+						if (!self.stats.by_class[self.particulas[i].classe]) {
+							self.stats.by_class[self.particulas[i].classe] = 0;
+						}
+						self.stats.by_class[self.particulas[i].classe] += 1;
+						self.stats.total += 1;
+					}
+				}
+
+				this.step = function () {
+					self.particulas_novas = [];
+					self.particulas_removidas = [];
+					let l = parseInt(self.quantidade_inicial * (1 - self.limiar_equilibrio));
+					let pode_quebrar = self.stats.by_class[0] < l;
+					let pode_juntar = self.stats.by_class[0] > l;
+					console.log(l, pode_quebrar, pode_juntar);
+					for (let i = 0, n = self.particulas.length; i < n; i++) {
+						const p = self.particulas[i];
+						const pc = self.classes_particulas[p.classe];
+						let oldx = p.x;
+						let oldy = p.y;
+						p.x += p.vx;
+						p.y += p.vy;
+						p.rotation += p.vrotation;
+						if (p.decay > 0) {
+							p.decay -= 1;
+						}
+
+						// colisão recipiente
+						if (p.x - pc.radius < 0 && p.vx < 0) {
+							p.vx *= -1;
+							p.x = oldx;
+						} else if (p.x + 2*pc.radius > self.recipiente.width && p.vx > 0) {		
+							p.vx *= -1;
+							p.x = oldx;
+						}
+
+						if (p.y - pc.radius < 0 && p.vy < 0) {
+							p.vy *= -1;
+							p.y = oldy;
+						} else if (p.y + 2*pc.radius > self.recipiente.height && p.vy > 0) {
+							p.vy *= -1;
+							p.y = oldy;
+						}
+
+						// colisão com outras partículas
+						for (let j = 0; j < n; j++) {
+							if (i === j 
+								|| self.particulas_removidas.indexOf(i) !== -1 
+								|| self.particulas_removidas.indexOf(j) !== -1) {
+								continue;
+							}
+							let q = self.particulas[j];
+							let pcq = self.classes_particulas[q.classe];
+							const dx = p.x - q.x;
+							const dy = p.y - q.y;
+							const dsqr = dx*dx+dy*dy;
+							const f = dsqr - self.colisoes[p.classe][q.classe];
+							if (f > 0) {
+								continue;
+							}
+
+							// fusion
+							if (pode_juntar && p.classe === 0 && q.classe === 0 && p.decay === 0 && q.decay === 0) {
+								//console.log("no2 -> n2o4");
+								self.particulas_removidas.push(i);
+								self.particulas_removidas.push(j);							
+								let vvx = p.vx + q.vx;
+								let vvy = p.vy + q.vy;
+								if (vvx === 0 || vvy === 0) {
+									vvx = -p.vx;
+									vvy =  p.vy;
+								} else {
+									let vvd = Math.sqrt(vvx*vvx + vvy*vvy);
+									vvx /= vvd;
+									vvy /= vvd;								
+								}
+								self.particulas_novas.push({
+									classe: 1,
+									x: (p.x + q.x)/2,
+									y: (p.y + q.y)/2,
+									rotation: (p.rotation + q.rotation)/2,
+									vx: vvx,
+									vy: vvy,
+									vrotation: (p.vrotation + q.vrotation)/2,
+									decay: self.classes_particulas[1].decay
+								});
+								continue;
+							}
+							// fission
+							if (pode_quebrar && p.classe === 1 && q.classe === 1 && p.decay === 0 && q.decay === 0) {
+								//console.log("n2o4 -> 2no2");
+								//console.log(p, q);
+								if (p.x < self.classes_particulas[0].radius * 4 || p.x > self.recipiente.width - self.classes_particulas[0].radius * 4) {
+									continue;
+								}
+								if (p.y < self.classes_particulas[0].radius * 4 || p.y > self.recipiente.height - self.classes_particulas[0].radius * 4) {
+									continue;
+								}
+								self.particulas_removidas.push(i);
+								self.particulas_removidas.push(j);
+								let ax = (p.x + q.x)/2;						
+								let ay = (p.y + q.y)/2;
+								self.particulas_novas.push({
+									classe: 0,
+									x: ax + self.classes_particulas[0].radius + 2,
+									y: ay - self.classes_particulas[0].radius - 2,
+									rotation: p.rotation,
+									vx: Math.sign(p.vx),
+									vy: Math.sign(-p.vy),
+									vrotation: (p.vrotation + q.vrotation)/2,
+									decay: self.classes_particulas[0].decay,
+								});		
+								self.particulas_novas.push({
+									classe: 0,
+									x: ax - self.classes_particulas[0].radius - 2,
+									y: ay - self.classes_particulas[0].radius - 2,
+									rotation: p.rotation,
+									vx: Math.sign(-p.vx),
+									vy: Math.sign(-p.vy),
+									vrotation: (p.vrotation + q.vrotation)/2,
+									decay: self.classes_particulas[0].decay,
+								});
+								self.particulas_novas.push({
+									classe: 0,
+									x: ax - self.classes_particulas[0].radius - 2,
+									y: ay + self.classes_particulas[0].radius + 2,
+									rotation: p.rotation,
+									vx: Math.sign(-p.vx),
+									vy: Math.sign(p.vy),
+									vrotation: (p.vrotation + q.vrotation)/2,
+									decay: self.classes_particulas[0].decay,
+								});	
+								self.particulas_novas.push({
+									classe: 0,
+									x: ax + self.classes_particulas[0].radius + 2,
+									y: ay + self.classes_particulas[0].radius + 2,
+									rotation: p.rotation,
+									vx: Math.sign(p.vx),
+									vy: Math.sign(p.vy),
+									vrotation: (p.vrotation + q.vrotation)/2,
+									decay: self.classes_particulas[0].decay,
+								});
+								//terminate = true;
+							}
+							
+							// colision
+							let cx = p.x - q.x;
+							let cy = p.y - q.y;
+							const dc = Math.sqrt(cx*cx + cy*cy);
+							cx /= dc;
+							cy /= dc;
+							p.vx =  cx;
+							p.vy =  cy;
+							q.vx = -cx;
+							q.vy = -cy;
+						}					
+					}
+
+					if (self.particulas_removidas.length > 0) {
+						//console.log("removing", to_push.length, "particles...")
+						self.particulas = self.particulas.filter((el, idx, arr) => self.particulas_removidas.indexOf(idx) === -1);
+					}
+					if (self.particulas_novas.length > 0) {
+						//console.log("adding", to_push.length, "particles...")
+						self.particulas_novas.forEach(function (p) {
+							self.particulas.push(p);
+						});
+					}
+					this.atualiza_stats();
+				}
+
+				this.calcula_limite_para_colisoes();
+			}
+
+			function StackHistGraph(opt) {
+				const self = this;				
+				this.ctx = opt.el.getContext("2d");
+				this.cur_step = 0;
+				this.colors = ["red", "green"];
+
+				this.advance = function(values) {
+					let total = 0;
+					for (let i = 0; i < values.length; i++) {
+						total += values[i];
+					}
+
+					let cur_y = 0;
+					let cur_color = 0;
+					for (let k in values) {
+						self.ctx.strokeStyle = self.colors[cur_color];
+						self.ctx.beginPath();
+						self.ctx.moveTo(self.cur_step, cur_y);
+						cur_y += parseInt((values[k]/total) * opt.el.height);
+						self.ctx.lineTo(self.cur_step, cur_y);
+						self.ctx.stroke();
+						cur_color = (cur_color + 1) % self.colors.length;
+					}
+					self.cur_step = (self.cur_step + 1) % opt.el.width;
+				};
+			}
+
+			function NormDistGraph(opt) {
+				const self = this;				
+				this.ctx = opt.el.getContext("2d");
+				this.bin_size = opt.el.width / opt.num_bins;
+				this.bins = {};
+				this.totals = 0;
+				for (let i = 0; i < opt.num_bins; i++) {
+					this.bins[i] = 0;
+				}
+
+				this.push = function (value) {
+					let bin_idx = valeu / opt.el.width;
+					self.bins[bin_idx] += 1;
+
+					self.ctx.clearRect(0, 0, opt.el.width, opt.el.height);					
+				}
+			}
+
+			function VisualizadorSimulacao(opt) {
+				const self = this;
+				this.ctx = opt.el.getContext("2d");
+				this.sprites = [];
+				this.histograma = new StackHistGraph({el: opt.histograma_el});
+
+				this.carrega_sprites = function () {
+					self.sprites = opt.sprites.map(function (e) {
+						const foo = new Image();
+						foo.src = e;
+						return foo;
+					});
+				}
+
+				this.render = function() {
+					self.ctx.clearRect(0, 0, opt.simulacao.recipiente.width, opt.simulacao.recipiente.height);				
+					opt.simulacao.particulas.forEach(function (p) {
+						const cp = opt.simulacao.classes_particulas[p.classe];					
+						
+						self.ctx.save();
+						self.ctx.translate(p.x, p.y);
+						self.ctx.rotate(p.rotation*Math.PI/180);
+						self.ctx.drawImage(self.sprites[cp.sprite], -cp.anchor.x, -cp.anchor.y, cp.width, cp.height);
+						self.ctx.translate(-p.x, -p.y);
+						self.ctx.restore();
+
+						//self.ctx.strokeStyle = "red";
+						//self.ctx.beginPath();
+						//self.ctx.arc(p.x, p.y, cp.radius, 0, 2*Math.PI, false);
+						//self.ctx.stroke();
+					});
+					let values = [];
+					for (let k in opt.simulacao.stats.by_class) {
+						values.push(opt.simulacao.stats.by_class[k]);
+					}
+					self.histograma.advance(values);
+					let no2_qtd = parseInt(values[0]);
+					let n2o4_qtd = parseInt(values[1]);
+					opt.log_el.innerHTML = "[NO2]^2/[N2O4] = [" + no2_qtd + "]^2/[" + n2o4_qtd + "] = " + parseFloat(no2_qtd*no2_qtd/n2o4_qtd).toFixed(2);
+				}
+
+				this.carrega_sprites();
+			}
+			
+			const simulacao = new Simulation({
+				classes_particulas: [
+					{
+						name: "no2",
+						sprite: 0,
+						width: 32,
+						height: 24,					
+						anchor: { x: 16, y: 12 },
+						radius: 12,
+						decay: 10,						
+					}, 
+					{
+						name: "n2o4",
+						sprite: 1,
+						width: 48,
+						height: 41,
+						anchor: { x: 24, y: 20 },
+						radius: 16,
+						decay: 10
+					}
+				],
+				recipiente: {
+					x: 0,
+					y: 0,
+					width: document.getElementById("box_width").value,
+					height: document.getElementById("box_height").value
+				},
+				limiar_equilibrio: document.getElementById("equilibrio").value
+			});
+			
+			const visualizador = new VisualizadorSimulacao({
+				el: document.getElementById("simulacao"),
+				simulacao: simulacao,
+				sprites: ["no2.png", "n2o4.png"],
+				histograma_el: document.getElementById("histograma"),
+				log_el: document.getElementById("log")
+			});
+			
+			document.getElementById("reset").addEventListener("click", function (e) {
+				let w = document.getElementById("box_width").value;
+				let h = document.getElementById("box_height").value;
+				simulacao.recipiente.width = w;
+				simulacao.recipiente.height = h;
+				let el = document.getElementById("simulacao");
+				el.style.width = w;
+				el.setAttribute('width', w);
+				el.style.height = h;
+				el.setAttribute('height', h);
+
+				simulacao.limiar_equilibrio = document.getElementById("equilibrio").value;
+
+				simulacao.inicializa(document.getElementById("qtd_no2").value);
+				visualizador.render();
+				
+			});
+			document.getElementById("step").addEventListener("click", function (e) {
+				simulacao.step();
+				visualizador.render();
+			});
+			let pause = false;
+			function loop() {
+				simulacao.step();
+				visualizador.render();
+				if (!pause) {
+					window.requestAnimationFrame(loop);
+				}
+			}
+			document.getElementById("run").addEventListener("click", function (e) {
+				if (e.target.innerHTML === "Roda") {
+					pause = false;
+					window.requestAnimationFrame(loop);
+					e.target.innerHTML = "Pausa";
+				} else {
+					pause = true;
+					e.target.innerHTML = "Roda";
+				}
+			});
+		</script>		
+	</body>
+</html>
